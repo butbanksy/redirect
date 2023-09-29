@@ -9,20 +9,25 @@ $authorizedCountries = $env["AUTHORIZED_COUNTRIES"] != null ? explode(',', $env[
 $unauthorizedCountries = $env["UNAUTHORIZED_COUNTRIES"] != null ? explode(',', $env["UNAUTHORIZED_COUNTRIES"]) : null;
 
 // Path to the text file containing IP addresses and ranges
-$file = 'ip_addresses.txt';
+$ipAddressesFile = 'ip_addresses.txt';
+$ipRangesFile = 'ip_ranges.txt';
 
 // Read the IP addresses and ranges from the text file
-$lines = file($file, FILE_IGNORE_NEW_LINES | FILE_SKIP_EMPTY_LINES);
+$ipAddresses = file($ipAddressesFile, FILE_IGNORE_NEW_LINES | FILE_SKIP_EMPTY_LINES);
+$ipRanges = file($ipRangesFile, FILE_IGNORE_NEW_LINES | FILE_SKIP_EMPTY_LINES);
 $ipGeolocationData = getGeolocationInfoForIp($userIP);
 
-if (in_array(strtolower($ipGeolocationData->country), $unauthorizedCountries)) {
+if (
+    ($unauthorizedCountries != null && in_array(strtolower($ipGeolocationData->country), $unauthorizedCountries))
+    || $authorizedCountries != null && !in_array(strtolower($ipGeolocationData->country), $authorizedCountries)
+) {
     logUserInformation($userIP, $userAgent, $ipGeolocationData, false, 'Unauthorized country');
-    header('Location: '. $env["REDIRECT_WEBSITE"] .'');
+    header('Location: ' . $env["REDIRECT_WEBSITE"] . '');
     exit();
 }
 
 // Check if the user's IP address matches any entry in the list
-foreach ($lines as $line) {
+foreach ($ipAddresses as $line) {
     // Check if the line contains a single IP address
     if (filter_var($line, FILTER_VALIDATE_IP)) {
         if ($userIP === $line) {
@@ -30,29 +35,31 @@ foreach ($lines as $line) {
             logUserInformation($userIP, $userAgent, $ipGeolocationData, false, 'Unauthorized IP address');
 
             // Redirect to website B
-            header('Location: '. $env["REDIRECT_WEBSITE"] .'');
-            exit();
-        }
-    } else {
-        // Line contains an IP address range
-        list($cidrIp, $cidrMask) = explode('/', $line);
-        $rangeStart = (ip2long($cidrIp)) & ((-1 << (32 - $cidrMask)));
-        $rangeEnd = (ip2long($cidrIp)) | ((1 << (32 - $cidrMask)) - 1);
-
-        if (ip2long($userIP) >= $rangeStart && ip2long($userIP) <= $rangeEnd) {
-            // Log user information in the database
-            logUserInformation($userIP, $userAgent, $ipGeolocationData, false, 'Unauthorized IP subnet');
-
-            // Redirect to website B
-            header('Location: '. $env["REDIRECT_WEBSITE"] .'');
+            header('Location: ' . $env["REDIRECT_WEBSITE"] . '');
             exit();
         }
     }
 }
+foreach ($ipRanges as $line) {
+    // Line contains an IP address range
+    list($cidrIp, $cidrMask) = explode('/', $line);
+    $rangeStart = (ip2long($cidrIp)) & ((-1 << (32 - $cidrMask)));
+    $rangeEnd = (ip2long($cidrIp)) | ((1 << (32 - $cidrMask)) - 1);
+
+    if (ip2long($userIP) >= $rangeStart && ip2long($userIP) <= $rangeEnd) {
+        // Log user information in the database
+        logUserInformation($userIP, $userAgent, $ipGeolocationData, false, 'Unauthorized IP subnet');
+
+        // Redirect to website B
+        header('Location: ' . $env["REDIRECT_WEBSITE"] . '');
+        exit();
+    }
+}
+
 
 // Redirect to website A
 logUserInformation($userIP, $userAgent, $ipGeolocationData, true, null);
-header('Location: '. $env["OFFICIAL_WEBSITE"] .'');
+header('Location: ' . $env["OFFICIAL_WEBSITE"] . '');
 exit();
 
 /**
@@ -73,9 +80,9 @@ function logUserInformation($ipAddress, $userAgent, $ipGeolocationData, $isAllow
     // Create a new PDO instance for the database connection
     $db = new PDO("mysql:host=$dbHost;dbname=$dbName", $dbUser, $dbPass);
 
-    
+
     // Prepare the SQL statement to insert the user information
-    $stmt = $db->prepare('INSERT INTO '. $env["DATABASE_TABLE_NAME"] .' (ip_address, city, region, country, location, isp, postal_code, timezone, is_allowed, redirection_reason) VALUES (:ip, :city, :region, :country, :location, :isp, :postal_code, :timezone, :is_allowed, :redirection_reason)');
+    $stmt = $db->prepare('INSERT INTO ' . $env["DATABASE_TABLE_NAME"] . ' (ip_address, city, region, country, location, isp, postal_code, timezone, is_allowed, redirection_reason) VALUES (:ip, :city, :region, :country, :location, :isp, :postal_code, :timezone, :is_allowed, :redirection_reason)');
 
     // Bind the values to the named parameters
     $stmt->bindValue(':ip', $ipAddress);
@@ -92,28 +99,27 @@ function logUserInformation($ipAddress, $userAgent, $ipGeolocationData, $isAllow
 
     // Execute the SQL statement
     $stmt->execute();
-    
-    
+
+
 }
 
 function getGeolocationInfoForIp($userIp)
 {
-    $endpointWithParams = 'https://ipinfo.io/' . $userIp . '?token=1c3f802d799a38'; 
-	$jsonResults = file_get_contents($endpointWithParams);
+    global $env;
+    $endpointWithParams = 'https://ipinfo.io/' . $userIp . '?token=' . $env["IP_API_TOKEN"];
+    $jsonResults = file_get_contents($endpointWithParams);
     return json_decode($jsonResults);
 
 }
 function getUserIp()
 {
-	global $_SERVER;
-	if (!empty($_SERVER['HTTP_CLIENT_IP'])) {   //check ip from share internet
-		$ip = $_SERVER['HTTP_CLIENT_IP'];
-	} elseif (!empty($_SERVER['HTTP_X_FORWARDED_FOR'])) {   // to check ip is pass from proxy 
-		$ip = $_SERVER['HTTP_X_FORWARDED_FOR'];
-	} else {
-		$ip = $_SERVER['REMOTE_ADDR'];
-	}
-	return $ip;
+    global $_SERVER;
+    if (!empty($_SERVER['HTTP_CLIENT_IP'])) { //check ip from share internet
+        $ip = $_SERVER['HTTP_CLIENT_IP'];
+    } elseif (!empty($_SERVER['HTTP_X_FORWARDED_FOR'])) { // to check ip is pass from proxy 
+        $ip = $_SERVER['HTTP_X_FORWARDED_FOR'];
+    } else {
+        $ip = $_SERVER['REMOTE_ADDR'];
+    }
+    return $ip;
 }
-
-
