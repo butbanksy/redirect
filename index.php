@@ -5,7 +5,8 @@ $env = parse_ini_file('.env');
 // Get the user's IP address and user-agent info
 $userIP = getUserIp();
 $userAgent = $_SERVER['HTTP_USER_AGENT'];
-$unauthorizedCountries = array('ca', 'se', 'SE', 'dk', 'de', 'ai'); // put here allowed country code ex : it uk us ( s�parate each one by , )
+$authorizedCountries = $env["AUTHORIZED_COUNTRIES"] != null ? explode(',', $env["AUTHORIZED_COUNTRIES"]) : null;
+$unauthorizedCountries = $env["UNAUTHORIZED_COUNTRIES"] != null ? explode(',', $env["UNAUTHORIZED_COUNTRIES"]) : null;
 
 // Path to the text file containing IP addresses and ranges
 $file = 'ip_addresses.txt';
@@ -15,7 +16,7 @@ $lines = file($file, FILE_IGNORE_NEW_LINES | FILE_SKIP_EMPTY_LINES);
 $ipGeolocationData = getGeolocationInfoForIp($userIP);
 
 if (in_array(strtolower($ipGeolocationData->country), $unauthorizedCountries)) {
-    logUserInformation($userIP, $userAgent, $ipGeolocationData);
+    logUserInformation($userIP, $userAgent, $ipGeolocationData, false, 'Unauthorized country');
     header('Location: '. $env["REDIRECT_WEBSITE"] .'');
     exit();
 }
@@ -26,7 +27,7 @@ foreach ($lines as $line) {
     if (filter_var($line, FILTER_VALIDATE_IP)) {
         if ($userIP === $line) {
             // Log user information in the database
-            logUserInformation($userIP, $userAgent, $ipGeolocationData);
+            logUserInformation($userIP, $userAgent, $ipGeolocationData, false, 'Unauthorized IP address');
 
             // Redirect to website B
             header('Location: '. $env["REDIRECT_WEBSITE"] .'');
@@ -40,7 +41,7 @@ foreach ($lines as $line) {
 
         if (ip2long($userIP) >= $rangeStart && ip2long($userIP) <= $rangeEnd) {
             // Log user information in the database
-            logUserInformation($userIP, $userAgent, $ipGeolocationData);
+            logUserInformation($userIP, $userAgent, $ipGeolocationData, false, 'Unauthorized IP subnet');
 
             // Redirect to website B
             header('Location: '. $env["REDIRECT_WEBSITE"] .'');
@@ -50,6 +51,7 @@ foreach ($lines as $line) {
 }
 
 // Redirect to website A
+logUserInformation($userIP, $userAgent, $ipGeolocationData, true, null);
 header('Location: '. $env["OFFICIAL_WEBSITE"] .'');
 exit();
 
@@ -59,7 +61,7 @@ exit();
  * @param string $ipAddress  The user's IP address.
  * @param string $userAgent  The user's user-agent information.
  */
-function logUserInformation($ipAddress, $userAgent, $ipGeolocationData)
+function logUserInformation($ipAddress, $userAgent, $ipGeolocationData, $isAllowed, $redirectionReason)
 {
     global $env;
     // Database connection settings
@@ -73,7 +75,7 @@ function logUserInformation($ipAddress, $userAgent, $ipGeolocationData)
 
     
     // Prepare the SQL statement to insert the user information
-    $stmt = $db->prepare('INSERT INTO '. $env["DATABASE_TABLE_NAME"] .' (ip_address, city, region, country, location, isp, postal_code, timezone, is_allowed) VALUES (:ip, :city, :region, :country, :location, :isp, :postal_code, :timezone, :is_allowed)');
+    $stmt = $db->prepare('INSERT INTO '. $env["DATABASE_TABLE_NAME"] .' (ip_address, city, region, country, location, isp, postal_code, timezone, is_allowed, redirection_reason) VALUES (:ip, :city, :region, :country, :location, :isp, :postal_code, :timezone, :is_allowed, :redirection_reason)');
 
     // Bind the values to the named parameters
     $stmt->bindValue(':ip', $ipAddress);
@@ -84,7 +86,8 @@ function logUserInformation($ipAddress, $userAgent, $ipGeolocationData)
     $stmt->bindValue(':isp', $ipGeolocationData->org);
     $stmt->bindValue(':postal_code', $ipGeolocationData->postal);
     $stmt->bindValue(':timezone', $ipGeolocationData->timezone);
-    $stmt->bindValue(':is_allowed', 0);
+    $stmt->bindValue(':is_allowed', $isAllowed ? 1 : 0);
+    $stmt->bindValue(':redirection_reason', $redirectionReason);
 
 
     // Execute the SQL statement
